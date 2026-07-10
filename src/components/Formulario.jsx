@@ -3,11 +3,19 @@ import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { getAuth, signOut } from "firebase/auth";
 import { getFirestore, doc, getDoc, setDoc, collection, query, orderBy, limit, getDocs, where, deleteDoc, addDoc, serverTimestamp } from "firebase/firestore";
+import { catalogDb } from '../firebase';
 import Modal from './Modal';
 import Spinner from './Spinner';
 import "./Formulario.css";
 
 const diasSemana = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado'];
+
+// Normaliza texto para comparación flexible: sin tildes, sin puntuación, sin mayúsculas, sin espacios extra
+const normalizarTexto = (t) =>
+  (t ?? '').trim().toLowerCase()
+    .normalize('NFD').replace(/\p{Diacritic}/gu, '')  // quita tildes: a con acento -> a, e con acento -> e, etc.
+    .replace(/[^a-z0-9\s]/gi, '')                       // quita puntuación y símbolos
+    .replace(/\s+/g, ' ');                              // colapsa espacios múltiples
 
 const Formulario = ({ readOnly = false, tipo = 'actual' }) => {
   const [data, setData] = useState({
@@ -43,6 +51,8 @@ const Formulario = ({ readOnly = false, tipo = 'actual' }) => {
   const [semanaSeleccionada, setSemanaSeleccionada] = useState('esta');
   const [mensajeTardio, setMensajeTardio] = useState('');
   const [mensajeTemprano, setMensajeTemprano] = useState('');
+  const [textoImagenes, setTextoImagenes] = useState({});
+  const [lightboxImg, setLightboxImg] = useState(null);
   const [ahora, setAhora] = useState(new Date());
   const [necesitaRecargar, setNecesitaRecargar] = useState(false);
   const [precioPorDia, setPrecioPorDia] = useState(2000); // Precio por defecto
@@ -200,6 +210,34 @@ const Formulario = ({ readOnly = false, tipo = 'actual' }) => {
     return `Lunes ${pad(lunes.getDate())} al Viernes ${pad(viernes.getDate())}`;
   }
 
+  // Event delegation para clicks en los tooltips de imagen + tecla Escape para cerrar lightbox
+  useEffect(() => {
+    const handleClick = (e) => {
+      const tooltipEl = e.target.closest('[data-lightbox-url]');
+      if (tooltipEl) {
+        const url = tooltipEl.dataset.lightboxUrl;
+        if (url) {
+          tooltipEl.style.setProperty('display', 'none', 'important');
+          setLightboxImg(url);
+        }
+      }
+    };
+    const handleKey = (e) => {
+      if (e.key === 'Escape') {
+        document.querySelectorAll('.menu-img-tooltip').forEach(el => {
+          el.style.removeProperty('display');
+        });
+        setLightboxImg(null);
+      }
+    };
+    document.addEventListener('click', handleClick);
+    document.addEventListener('keydown', handleKey);
+    return () => {
+      document.removeEventListener('click', handleClick);
+      document.removeEventListener('keydown', handleKey);
+    };
+  }, []);
+
   useEffect(() => {
     const loadInitialData = async () => {
       setIsLoading(true);
@@ -356,6 +394,18 @@ const Formulario = ({ readOnly = false, tipo = 'actual' }) => {
           const menuData = menuDoc.data();
           // console.log("MenÃº cargado:", menuData);
 
+          // Cargar imágenes de platos desde el catálogo central (compartido entre clientes)
+          // No debe romper la carga del menú si el catálogo no está disponible/configurado.
+          let imgsLocales = {};
+          try {
+            const imagenesRef = doc(catalogDb, 'config', 'textoImagenes');
+            const imagenesSnap = await getDoc(imagenesRef);
+            imgsLocales = imagenesSnap.exists() ? imagenesSnap.data() : {};
+            setTextoImagenes(imgsLocales);
+          } catch (imgErr) {
+            console.warn('No se pudo cargar el catálogo de imágenes:', imgErr.message);
+          }
+
           const menuFormateado = {
             LUNES: menuData.dias.lunes?.esFeriado ? (
               <div className="menu-opcion-feriado">
@@ -376,33 +426,69 @@ const Formulario = ({ readOnly = false, tipo = 'actual' }) => {
                   })
                   .map(([key, value]) => {
                     if (key === 'sandwichMiga' && value?.tipo) {
+                      const imgData = Object.entries(imgsLocales).find(([k]) => normalizarTexto(k) === normalizarTexto(value.tipo))?.[1];
+                      const imgUrl = imgData?.url;
                       return (
                         <div key={key} className="sandwich-miga">
                           <h4>Sandwich de Miga</h4>
-                          <p>{value.tipo} ({value.cantidad} triÃngulos)</p>
+                          <div className={`menu-item-desc-wrap${imgUrl ? ' has-img-tooltip' : ''}`}>
+                            <p className="menu-item-desc">{value.tipo} ({value.cantidad} triángulos)</p>
+                            {imgUrl && (
+                              <div className="menu-img-tooltip" data-lightbox-url={imgUrl}>
+                                <img src={imgUrl} alt={value.tipo} onError={e => { e.target.style.display = 'none'; }} />
+                              </div>
+                            )}
+                          </div>
                         </div>
                       );
                     }
                     if (key === 'ensaladas' && value?.ensalada1) {
+                      const imgData = Object.entries(imgsLocales).find(([k]) => normalizarTexto(k) === normalizarTexto(value.ensalada1))?.[1];
+                      const imgUrl = imgData?.url;
                       return (
                         <div key={key} className="ensalada">
                           <h4>Ensalada</h4>
-                          <p>{value.ensalada1}</p>
+                          <div className={`menu-item-desc-wrap${imgUrl ? ' has-img-tooltip' : ''}`}>
+                            <p className="menu-item-desc">{value.ensalada1}</p>
+                            {imgUrl && (
+                              <div className="menu-img-tooltip" data-lightbox-url={imgUrl}>
+                                <img src={imgUrl} alt={value.ensalada1} onError={e => { e.target.style.display = 'none'; }} />
+                              </div>
+                            )}
+                          </div>
                         </div>
                       );
                     }
                     if (key === 'postre') {
+                      const imgData = Object.entries(imgsLocales).find(([k]) => normalizarTexto(k) === normalizarTexto(value))?.[1];
+                      const imgUrl = imgData?.url;
                       return (
                         <div key={key} className="postre">
                           <h4>Postre</h4>
-                          <p>{value}</p>
+                          <div className={`menu-item-desc-wrap${imgUrl ? ' has-img-tooltip' : ''}`}>
+                            <p className="menu-item-desc">{value}</p>
+                            {imgUrl && (
+                              <div className="menu-img-tooltip" data-lightbox-url={imgUrl}>
+                                <img src={imgUrl} alt={value} onError={e => { e.target.style.display = 'none'; }} />
+                              </div>
+                            )}
+                          </div>
                         </div>
                       );
                     }
+                    const imgData = Object.entries(imgsLocales).find(([k]) => normalizarTexto(k) === normalizarTexto(value))?.[1];
+                    const imgUrl = imgData?.url;
                     return (
                       <div key={key} className="menu-item">
                         <h4>{key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, ' ')}</h4>
-                        <p>{value}</p>
+                        <div className={`menu-item-desc-wrap${imgUrl ? ' has-img-tooltip' : ''}`}>
+                          <p className="menu-item-desc">{value}</p>
+                          {imgUrl && (
+                            <div className="menu-img-tooltip" data-lightbox-url={imgUrl}>
+                              <img src={imgUrl} alt={value} onError={e => { e.target.style.display = 'none'; }} />
+                            </div>
+                          )}
+                        </div>
                       </div>
                     );
                   })}
@@ -427,33 +513,69 @@ const Formulario = ({ readOnly = false, tipo = 'actual' }) => {
                   })
                   .map(([key, value]) => {
                     if (key === 'sandwichMiga' && value?.tipo) {
+                      const imgData = Object.entries(imgsLocales).find(([k]) => normalizarTexto(k) === normalizarTexto(value.tipo))?.[1];
+                      const imgUrl = imgData?.url;
                       return (
                         <div key={key} className="sandwich-miga">
                           <h4>Sandwich de Miga</h4>
-                          <p>{value.tipo} ({value.cantidad} triÃngulos)</p>
+                          <div className={`menu-item-desc-wrap${imgUrl ? ' has-img-tooltip' : ''}`}>
+                            <p className="menu-item-desc">{value.tipo} ({value.cantidad} triángulos)</p>
+                            {imgUrl && (
+                              <div className="menu-img-tooltip" data-lightbox-url={imgUrl}>
+                                <img src={imgUrl} alt={value.tipo} onError={e => { e.target.style.display = 'none'; }} />
+                              </div>
+                            )}
+                          </div>
                         </div>
                       );
                     }
                     if (key === 'ensaladas' && value?.ensalada1) {
+                      const imgData = Object.entries(imgsLocales).find(([k]) => normalizarTexto(k) === normalizarTexto(value.ensalada1))?.[1];
+                      const imgUrl = imgData?.url;
                       return (
                         <div key={key} className="ensalada">
                           <h4>Ensalada</h4>
-                          <p>{value.ensalada1}</p>
+                          <div className={`menu-item-desc-wrap${imgUrl ? ' has-img-tooltip' : ''}`}>
+                            <p className="menu-item-desc">{value.ensalada1}</p>
+                            {imgUrl && (
+                              <div className="menu-img-tooltip" data-lightbox-url={imgUrl}>
+                                <img src={imgUrl} alt={value.ensalada1} onError={e => { e.target.style.display = 'none'; }} />
+                              </div>
+                            )}
+                          </div>
                         </div>
                       );
                     }
                     if (key === 'postre') {
+                      const imgData = Object.entries(imgsLocales).find(([k]) => normalizarTexto(k) === normalizarTexto(value))?.[1];
+                      const imgUrl = imgData?.url;
                       return (
                         <div key={key} className="postre">
                           <h4>Postre</h4>
-                          <p>{value}</p>
+                          <div className={`menu-item-desc-wrap${imgUrl ? ' has-img-tooltip' : ''}`}>
+                            <p className="menu-item-desc">{value}</p>
+                            {imgUrl && (
+                              <div className="menu-img-tooltip" data-lightbox-url={imgUrl}>
+                                <img src={imgUrl} alt={value} onError={e => { e.target.style.display = 'none'; }} />
+                              </div>
+                            )}
+                          </div>
                         </div>
                       );
                     }
+                    const imgData = Object.entries(imgsLocales).find(([k]) => normalizarTexto(k) === normalizarTexto(value))?.[1];
+                    const imgUrl = imgData?.url;
                     return (
                       <div key={key} className="menu-item">
                         <h4>{key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, ' ')}</h4>
-                        <p>{value}</p>
+                        <div className={`menu-item-desc-wrap${imgUrl ? ' has-img-tooltip' : ''}`}>
+                          <p className="menu-item-desc">{value}</p>
+                          {imgUrl && (
+                            <div className="menu-img-tooltip" data-lightbox-url={imgUrl}>
+                              <img src={imgUrl} alt={value} onError={e => { e.target.style.display = 'none'; }} />
+                            </div>
+                          )}
+                        </div>
                       </div>
                     );
                   })}
@@ -478,33 +600,69 @@ const Formulario = ({ readOnly = false, tipo = 'actual' }) => {
                   })
                   .map(([key, value]) => {
                     if (key === 'sandwichMiga' && value?.tipo) {
+                      const imgData = Object.entries(imgsLocales).find(([k]) => normalizarTexto(k) === normalizarTexto(value.tipo))?.[1];
+                      const imgUrl = imgData?.url;
                       return (
                         <div key={key} className="sandwich-miga">
                           <h4>Sandwich de Miga</h4>
-                          <p>{value.tipo} ({value.cantidad} triÃngulos)</p>
+                          <div className={`menu-item-desc-wrap${imgUrl ? ' has-img-tooltip' : ''}`}>
+                            <p className="menu-item-desc">{value.tipo} ({value.cantidad} triángulos)</p>
+                            {imgUrl && (
+                              <div className="menu-img-tooltip" data-lightbox-url={imgUrl}>
+                                <img src={imgUrl} alt={value.tipo} onError={e => { e.target.style.display = 'none'; }} />
+                              </div>
+                            )}
+                          </div>
                         </div>
                       );
                     }
                     if (key === 'ensaladas' && value?.ensalada1) {
+                      const imgData = Object.entries(imgsLocales).find(([k]) => normalizarTexto(k) === normalizarTexto(value.ensalada1))?.[1];
+                      const imgUrl = imgData?.url;
                       return (
                         <div key={key} className="ensalada">
                           <h4>Ensalada</h4>
-                          <p>{value.ensalada1}</p>
+                          <div className={`menu-item-desc-wrap${imgUrl ? ' has-img-tooltip' : ''}`}>
+                            <p className="menu-item-desc">{value.ensalada1}</p>
+                            {imgUrl && (
+                              <div className="menu-img-tooltip" data-lightbox-url={imgUrl}>
+                                <img src={imgUrl} alt={value.ensalada1} onError={e => { e.target.style.display = 'none'; }} />
+                              </div>
+                            )}
+                          </div>
                         </div>
                       );
                     }
                     if (key === 'postre') {
+                      const imgData = Object.entries(imgsLocales).find(([k]) => normalizarTexto(k) === normalizarTexto(value))?.[1];
+                      const imgUrl = imgData?.url;
                       return (
                         <div key={key} className="postre">
                           <h4>Postre</h4>
-                          <p>{value}</p>
+                          <div className={`menu-item-desc-wrap${imgUrl ? ' has-img-tooltip' : ''}`}>
+                            <p className="menu-item-desc">{value}</p>
+                            {imgUrl && (
+                              <div className="menu-img-tooltip" data-lightbox-url={imgUrl}>
+                                <img src={imgUrl} alt={value} onError={e => { e.target.style.display = 'none'; }} />
+                              </div>
+                            )}
+                          </div>
                         </div>
                       );
                     }
+                    const imgData = Object.entries(imgsLocales).find(([k]) => normalizarTexto(k) === normalizarTexto(value))?.[1];
+                    const imgUrl = imgData?.url;
                     return (
                       <div key={key} className="menu-item">
                         <h4>{key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, ' ')}</h4>
-                        <p>{value}</p>
+                        <div className={`menu-item-desc-wrap${imgUrl ? ' has-img-tooltip' : ''}`}>
+                          <p className="menu-item-desc">{value}</p>
+                          {imgUrl && (
+                            <div className="menu-img-tooltip" data-lightbox-url={imgUrl}>
+                              <img src={imgUrl} alt={value} onError={e => { e.target.style.display = 'none'; }} />
+                            </div>
+                          )}
+                        </div>
                       </div>
                     );
                   })}
@@ -529,33 +687,69 @@ const Formulario = ({ readOnly = false, tipo = 'actual' }) => {
                   })
                   .map(([key, value]) => {
                     if (key === 'sandwichMiga' && value?.tipo) {
+                      const imgData = Object.entries(imgsLocales).find(([k]) => normalizarTexto(k) === normalizarTexto(value.tipo))?.[1];
+                      const imgUrl = imgData?.url;
                       return (
                         <div key={key} className="sandwich-miga">
                           <h4>Sandwich de Miga</h4>
-                          <p>{value.tipo} ({value.cantidad} triÃngulos)</p>
+                          <div className={`menu-item-desc-wrap${imgUrl ? ' has-img-tooltip' : ''}`}>
+                            <p className="menu-item-desc">{value.tipo} ({value.cantidad} triángulos)</p>
+                            {imgUrl && (
+                              <div className="menu-img-tooltip" data-lightbox-url={imgUrl}>
+                                <img src={imgUrl} alt={value.tipo} onError={e => { e.target.style.display = 'none'; }} />
+                              </div>
+                            )}
+                          </div>
                         </div>
                       );
                     }
                     if (key === 'ensaladas' && value?.ensalada1) {
+                      const imgData = Object.entries(imgsLocales).find(([k]) => normalizarTexto(k) === normalizarTexto(value.ensalada1))?.[1];
+                      const imgUrl = imgData?.url;
                       return (
                         <div key={key} className="ensalada">
                           <h4>Ensalada</h4>
-                          <p>{value.ensalada1}</p>
+                          <div className={`menu-item-desc-wrap${imgUrl ? ' has-img-tooltip' : ''}`}>
+                            <p className="menu-item-desc">{value.ensalada1}</p>
+                            {imgUrl && (
+                              <div className="menu-img-tooltip" data-lightbox-url={imgUrl}>
+                                <img src={imgUrl} alt={value.ensalada1} onError={e => { e.target.style.display = 'none'; }} />
+                              </div>
+                            )}
+                          </div>
                         </div>
                       );
                     }
                     if (key === 'postre') {
+                      const imgData = Object.entries(imgsLocales).find(([k]) => normalizarTexto(k) === normalizarTexto(value))?.[1];
+                      const imgUrl = imgData?.url;
                       return (
                         <div key={key} className="postre">
                           <h4>Postre</h4>
-                          <p>{value}</p>
+                          <div className={`menu-item-desc-wrap${imgUrl ? ' has-img-tooltip' : ''}`}>
+                            <p className="menu-item-desc">{value}</p>
+                            {imgUrl && (
+                              <div className="menu-img-tooltip" data-lightbox-url={imgUrl}>
+                                <img src={imgUrl} alt={value} onError={e => { e.target.style.display = 'none'; }} />
+                              </div>
+                            )}
+                          </div>
                         </div>
                       );
                     }
+                    const imgData = Object.entries(imgsLocales).find(([k]) => normalizarTexto(k) === normalizarTexto(value))?.[1];
+                    const imgUrl = imgData?.url;
                     return (
                       <div key={key} className="menu-item">
                         <h4>{key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, ' ')}</h4>
-                        <p>{value}</p>
+                        <div className={`menu-item-desc-wrap${imgUrl ? ' has-img-tooltip' : ''}`}>
+                          <p className="menu-item-desc">{value}</p>
+                          {imgUrl && (
+                            <div className="menu-img-tooltip" data-lightbox-url={imgUrl}>
+                              <img src={imgUrl} alt={value} onError={e => { e.target.style.display = 'none'; }} />
+                            </div>
+                          )}
+                        </div>
                       </div>
                     );
                   })}
@@ -580,33 +774,69 @@ const Formulario = ({ readOnly = false, tipo = 'actual' }) => {
                   })
                   .map(([key, value]) => {
                     if (key === 'sandwichMiga' && value?.tipo) {
+                      const imgData = Object.entries(imgsLocales).find(([k]) => normalizarTexto(k) === normalizarTexto(value.tipo))?.[1];
+                      const imgUrl = imgData?.url;
                       return (
                         <div key={key} className="sandwich-miga">
                           <h4>Sandwich de Miga</h4>
-                          <p>{value.tipo} ({value.cantidad} triÃngulos)</p>
+                          <div className={`menu-item-desc-wrap${imgUrl ? ' has-img-tooltip' : ''}`}>
+                            <p className="menu-item-desc">{value.tipo} ({value.cantidad} triángulos)</p>
+                            {imgUrl && (
+                              <div className="menu-img-tooltip" data-lightbox-url={imgUrl}>
+                                <img src={imgUrl} alt={value.tipo} onError={e => { e.target.style.display = 'none'; }} />
+                              </div>
+                            )}
+                          </div>
                         </div>
                       );
                     }
                     if (key === 'ensaladas' && value?.ensalada1) {
+                      const imgData = Object.entries(imgsLocales).find(([k]) => normalizarTexto(k) === normalizarTexto(value.ensalada1))?.[1];
+                      const imgUrl = imgData?.url;
                       return (
                         <div key={key} className="ensalada">
                           <h4>Ensalada</h4>
-                          <p>{value.ensalada1}</p>
+                          <div className={`menu-item-desc-wrap${imgUrl ? ' has-img-tooltip' : ''}`}>
+                            <p className="menu-item-desc">{value.ensalada1}</p>
+                            {imgUrl && (
+                              <div className="menu-img-tooltip" data-lightbox-url={imgUrl}>
+                                <img src={imgUrl} alt={value.ensalada1} onError={e => { e.target.style.display = 'none'; }} />
+                              </div>
+                            )}
+                          </div>
                         </div>
                       );
                     }
                     if (key === 'postre') {
+                      const imgData = Object.entries(imgsLocales).find(([k]) => normalizarTexto(k) === normalizarTexto(value))?.[1];
+                      const imgUrl = imgData?.url;
                       return (
                         <div key={key} className="postre">
                           <h4>Postre</h4>
-                          <p>{value}</p>
+                          <div className={`menu-item-desc-wrap${imgUrl ? ' has-img-tooltip' : ''}`}>
+                            <p className="menu-item-desc">{value}</p>
+                            {imgUrl && (
+                              <div className="menu-img-tooltip" data-lightbox-url={imgUrl}>
+                                <img src={imgUrl} alt={value} onError={e => { e.target.style.display = 'none'; }} />
+                              </div>
+                            )}
+                          </div>
                         </div>
                       );
                     }
+                    const imgData = Object.entries(imgsLocales).find(([k]) => normalizarTexto(k) === normalizarTexto(value))?.[1];
+                    const imgUrl = imgData?.url;
                     return (
                       <div key={key} className="menu-item">
                         <h4>{key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, ' ')}</h4>
-                        <p>{value}</p>
+                        <div className={`menu-item-desc-wrap${imgUrl ? ' has-img-tooltip' : ''}`}>
+                          <p className="menu-item-desc">{value}</p>
+                          {imgUrl && (
+                            <div className="menu-img-tooltip" data-lightbox-url={imgUrl}>
+                              <img src={imgUrl} alt={value} onError={e => { e.target.style.display = 'none'; }} />
+                            </div>
+                          )}
+                        </div>
                       </div>
                     );
                   })}
@@ -1606,6 +1836,28 @@ const Formulario = ({ readOnly = false, tipo = 'actual' }) => {
           )}
         </>
       )}
+
+      {/* Lightbox - imagen completa al hacer click */}
+      {lightboxImg && (() => {
+        const closeLightbox = () => {
+          // Restaurar tooltips que fueron ocultados manualmente
+          document.querySelectorAll('.menu-img-tooltip').forEach(el => {
+            el.style.removeProperty('display');
+          });
+          setLightboxImg(null);
+        };
+        return (
+          <div className="lightbox-overlay" onClick={closeLightbox}>
+            <button className="lightbox-close" onClick={closeLightbox}>✕</button>
+            <img
+              className="lightbox-img"
+              src={lightboxImg}
+              alt="Vista completa"
+              onClick={e => e.stopPropagation()}
+            />
+          </div>
+        );
+      })()}
     </div>
   );
 };
