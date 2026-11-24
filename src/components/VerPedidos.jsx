@@ -7,6 +7,10 @@ import Spinner from './Spinner';
 import VerPedidosProximaSemana from './VerPedidosProximaSemana';
 import './VerPedidos.css';
 
+// Menú especial: NO forma parte de opcionesMenuCascada (no se carga desde la configuración).
+// Solo se ofrece a usuarios con menuEspecial === true y nunca lleva postre.
+const MENU_SIN_ALMIDON_AZUCAR = 'Menú sin almidón y sin azúcar';
+
 const VerPedidos = ({ tipo = 'actual', readOnly = false }) => {
   // Si el tipo es 'proxima', renderizar el componente VerPedidosProximaSemana
   if (tipo === 'proxima') {
@@ -56,7 +60,8 @@ const VerPedidos = ({ tipo = 'actual', readOnly = false }) => {
             nombre: `${userData.nombre || ''} ${userData.apellido || ''}`.trim() || 'Usuario sin nombre',
             email: userData.email,
             legajo: userData.legajo || 'Sin asignar',
-            bonificacion: userData.bonificacion // Preservar el valor original (true, false, o undefined)
+            bonificacion: userData.bonificacion, // Preservar el valor original (true, false, o undefined)
+            menuEspecial: userData.menuEspecial
           });
         }
       });
@@ -124,7 +129,8 @@ const VerPedidos = ({ tipo = 'actual', readOnly = false }) => {
             viernesData: pedido ? pedido.viernes : null,
             tienePedido: !!pedido,
             precioTotal: precioTotal,
-            bonificacion: usuario.bonificacion
+            bonificacion: usuario.bonificacion,
+            menuEspecial: usuario.menuEspecial
           };
         })
         .filter(usuario => usuario !== null);
@@ -305,7 +311,8 @@ const VerPedidos = ({ tipo = 'actual', readOnly = false }) => {
       if (opcionesCascada) {
         const labelMap = { 'lunes': 'Lunes', 'martes': 'Martes', 'miercoles': 'Miercoles', 'jueves': 'Jueves', 'viernes': 'Viernes' };
         const menusKey = Object.keys(opcionesCascada.menus || {}).find(k => norm(k) === norm(labelMap[dia])) || labelMap[dia];
-        const menusList = opcionesCascada.menus?.[menusKey] || [];
+        // Siempre incluir el menú especial para reconocer pedidos ya guardados (va primero por ser el más específico)
+        const menusList = [MENU_SIN_ALMIDON_AZUCAR, ...(opcionesCascada.menus?.[menusKey] || [])];
 
         let menuEncontrado = pedidoStr.toUpperCase();
         let postre = '';
@@ -410,7 +417,8 @@ const VerPedidos = ({ tipo = 'actual', readOnly = false }) => {
 
     const norm = (s) => (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
     const menusKey = opcionesCascada.menus ? (Object.keys(opcionesCascada.menus).find(k => norm(k) === norm(diaLabel)) || diaLabel) : diaLabel;
-    const menusList = opcionesCascada.menus?.[menusKey] || [];
+    // Siempre incluir el menú especial para precargar bien pedidos ya guardados (va primero por ser el más específico)
+    const menusList = [MENU_SIN_ALMIDON_AZUCAR, ...(opcionesCascada.menus?.[menusKey] || [])];
     const postresList = opcionesCascada.postres || [];
     const bebidasList = opcionesCascada.bebidas || [];
 
@@ -733,7 +741,11 @@ const VerPedidos = ({ tipo = 'actual', readOnly = false }) => {
         if (!labelCompleto) return;
 
         // Extraer el tipo base del menú
-        const tipoBase = labelCompleto.includes('C/') ? labelCompleto.split('C/')[0].trim() : labelCompleto;
+        // El menú especial no tiene "C/": agrupar por el nombre del menú (sin la bebida)
+        const menuEspecialUpper = MENU_SIN_ALMIDON_AZUCAR.toUpperCase();
+        const tipoBase = labelCompleto.startsWith(menuEspecialUpper + ' Y ')
+          ? menuEspecialUpper
+          : (labelCompleto.includes('C/') ? labelCompleto.split('C/')[0].trim() : labelCompleto);
         tiposDelDia.add(tipoBase);
 
         // Inicializar array si no existe
@@ -843,6 +855,9 @@ const VerPedidos = ({ tipo = 'actual', readOnly = false }) => {
       let pedidoStr = '';
       if (nueva.menu === 'NO PEDIR') {
         pedidoStr = 'no_pedir';
+      } else if (nueva.menu === MENU_SIN_ALMIDON_AZUCAR) {
+        // Menú especial: sin postre
+        if (nueva.bebida) pedidoStr = `${nueva.menu} Y ${nueva.bebida}`;
       } else if (nueva.menu && nueva.postre && nueva.bebida) {
         pedidoStr = `${nueva.menu} ${nueva.postre} Y ${nueva.bebida}`;
       }
@@ -1103,7 +1118,9 @@ const VerPedidos = ({ tipo = 'actual', readOnly = false }) => {
               const norm = (s) => (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
               const labelMap = { 'lunes': 'Lunes', 'martes': 'Martes', 'miercoles': 'Miercoles', 'jueves': 'Jueves', 'viernes': 'Viernes' };
               const menusKey = opcionesCascada?.menus ? (Object.keys(opcionesCascada.menus).find(k => norm(k) === norm(labelMap[dia])) || labelMap[dia]) : labelMap[dia];
-              const menusList = opcionesCascada?.menus?.[menusKey] || [];
+              const menusListBase = opcionesCascada?.menus?.[menusKey] || [];
+              const menusList = editingUser?.menuEspecial ? [...menusListBase, MENU_SIN_ALMIDON_AZUCAR] : menusListBase;
+              const esMenuEspecial = sel.menu === MENU_SIN_ALMIDON_AZUCAR;
 
               // Resolver postres por día (auto/manual)
               const postresBase = opcionesCascada?.postres || [];
@@ -1166,7 +1183,7 @@ const VerPedidos = ({ tipo = 'actual', readOnly = false }) => {
                         <option value="NO PEDIR">NO PEDIR COMIDA ESTE DIA</option>
                         {menusList.map((m, i) => <option key={i} value={m}>{m}</option>)}
                       </select>
-                      {sel.menu && sel.menu !== 'NO PEDIR' && (
+                      {sel.menu && sel.menu !== 'NO PEDIR' && !esMenuEspecial && (
                         <select
                           className="select-edit"
                           value={sel.postre}
@@ -1176,7 +1193,7 @@ const VerPedidos = ({ tipo = 'actual', readOnly = false }) => {
                           {postresList.map((p, i) => <option key={i} value={p}>{p}</option>)}
                         </select>
                       )}
-                      {sel.menu && sel.menu !== 'NO PEDIR' && sel.postre && (
+                      {sel.menu && sel.menu !== 'NO PEDIR' && (esMenuEspecial || sel.postre) && (
                         <select
                           className="select-edit"
                           value={sel.bebida}

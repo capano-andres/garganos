@@ -8,6 +8,10 @@ import Modal from './Modal';
 import Spinner from './Spinner';
 import "./Formulario.css";
 
+// Menú especial: NO forma parte de opcionesMenuCascada (no se carga desde la configuración).
+// Solo se ofrece a usuarios con menuEspecial === true y nunca lleva postre.
+const MENU_SIN_ALMIDON_AZUCAR = 'Menú sin almidón y sin azúcar';
+
 const diasSemana = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado'];
 
 // Normaliza texto para comparación flexible: sin tildes, sin puntuación, sin mayúsculas, sin espacios extra
@@ -76,6 +80,10 @@ const Formulario = ({ readOnly = false, tipo = 'actual' }) => {
     const yIdx = str.lastIndexOf(' Y ');
     if (yIdx === -1) return { menu: '', postre: '', bebida: '' };
     const bebida = str.substring(yIdx + 3);
+    // Menú especial (sin postre): "MENU_SIN_ALMIDON_AZUCAR Y BEBIDA"
+    if (str.startsWith(MENU_SIN_ALMIDON_AZUCAR + ' Y ')) {
+      return { menu: MENU_SIN_ALMIDON_AZUCAR, postre: '', bebida };
+    }
     const menuPostre = str.substring(0, yIdx);
     const cIdx = menuPostre.indexOf(' C/');
     if (cIdx === -1) return { menu: '', postre: '', bebida: '' };
@@ -995,6 +1003,9 @@ const Formulario = ({ readOnly = false, tipo = 'actual' }) => {
       let pedidoStr = '';
       if (nueva.menu === 'NO PEDIR') {
         pedidoStr = 'no_pedir';
+      } else if (nueva.menu === MENU_SIN_ALMIDON_AZUCAR) {
+        // Menú especial: sin postre
+        if (nueva.bebida) pedidoStr = `${nueva.menu} Y ${nueva.bebida}`;
       } else if (nueva.menu && nueva.postre && nueva.bebida) {
         pedidoStr = `${nueva.menu} ${nueva.postre} Y ${nueva.bebida}`;
       }
@@ -1012,7 +1023,9 @@ const Formulario = ({ readOnly = false, tipo = 'actual' }) => {
     const sel = seleccion[diaKey] || { menu: '', postre: '', bebida: '' };
     const norm = (s) => (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
     const menusKey = opcionesCascada?.menus ? (Object.keys(opcionesCascada.menus).find(k => norm(k) === norm(diaLabel)) || diaLabel) : diaLabel;
-    const menusList = opcionesCascada?.menus?.[menusKey] || [];
+    const menusListBase = opcionesCascada?.menus?.[menusKey] || [];
+    const menusList = userData?.menuEspecial ? [...menusListBase, MENU_SIN_ALMIDON_AZUCAR] : menusListBase;
+    const esMenuEspecial = sel.menu === MENU_SIN_ALMIDON_AZUCAR;
     // Obtener los postres según el modo configurado (por día)
     const postresBase = opcionesCascada?.postres || [];
     let postresList = postresBase;
@@ -1081,7 +1094,7 @@ const Formulario = ({ readOnly = false, tipo = 'actual' }) => {
                   <option value="NO PEDIR">NO PEDIR COMIDA ESTE DIA</option>
                   {menusList.map((m, i) => <option key={i} value={m}>{m}</option>)}
                 </select>
-                {sel.menu && sel.menu !== 'NO PEDIR' && (
+                {sel.menu && sel.menu !== 'NO PEDIR' && !esMenuEspecial && (
                   <select
                     className="formulario-select"
                     value={sel.postre}
@@ -1092,7 +1105,7 @@ const Formulario = ({ readOnly = false, tipo = 'actual' }) => {
                     {postresList.map((p, i) => <option key={i} value={p}>{p}</option>)}
                   </select>
                 )}
-                {sel.menu && sel.menu !== 'NO PEDIR' && sel.postre && (
+                {sel.menu && sel.menu !== 'NO PEDIR' && (esMenuEspecial || sel.postre) && (
                   <select
                     className="formulario-select"
                     value={sel.bebida}
